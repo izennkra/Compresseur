@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Compresseur – images et vidéos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/upng-js@2.1.0/UPNG.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/mp4box@0.5.3/dist/mp4box.all.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.5/build/mp4-muxer.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root {
+  --bg: #E9EAE8;
+  --surface: #F6F6F4;
+  --line: #D2D4D1;
+  --ink: #1D1F20;
+  --muted: #6A6D6F;
+  --fill: #CED1D6;
+  --ok: #1F7A3D;
+  --warn: #9A6200;
+  --bad: #B0302A;
+  --focus: #2F5BD3;
+  color-scheme: light;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151617; --surface: #1F2122; --line: #35383A; --ink: #E8E9E7;
+    --muted: #9A9DA0; --fill: #3B3E41; --ok: #5DBB7A; --warn: #D9A441; --bad: #E0716A; --focus: #8EA9F5;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151617; --surface: #1F2122; --line: #35383A; --ink: #E8E9E7;
+  --muted: #9A9DA0; --fill: #3B3E41; --ok: #5DBB7A; --warn: #D9A441; --bad: #E0716A; --focus: #8EA9F5;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Schibsted Grotesk", "Helvetica Neue", Arial, system-ui, sans-serif;
+  font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 48px 24px 80px; }
+h1 {
+  font-size: clamp(48px, 9vw, 112px); line-height: 0.9; letter-spacing: -0.045em;
+  font-weight: 600; margin: 0 0 20px;
+}
+.lede { max-width: 58ch; color: var(--muted); margin: 0 0 40px; font-size: 18px; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Réglages */
+.settings { display: grid; grid-template-columns: 1fr; gap: 20px; margin-bottom: 28px; }
+.field-label { font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+.levels { display: flex; flex-wrap: wrap; gap: 6px; }
+.levels button {
+  border: 1px solid var(--line); background: transparent; border-radius: 999px;
+  padding: 8px 16px; cursor: pointer;
+}
+.levels button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.level-help { margin: 10px 0 0; max-width: 62ch; }
+.custom { display: none; align-items: center; gap: 14px; margin-top: 12px; }
+.custom.on { display: flex; }
+.custom input[type="range"] { width: min(320px, 60vw); accent-color: var(--ink); }
+.row { display: flex; flex-wrap: wrap; gap: 20px 32px; }
+select {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 12px; min-width: 180px;
+}
+
+/* Zone de dépôt */
+.drop {
+  position: relative; display: grid; place-items: center; text-align: center; min-height: 220px;
+  border: 1.5px dashed var(--muted); border-radius: 14px; background: var(--surface);
+  padding: 32px; cursor: pointer; transition: background .15s, border-color .15s;
+}
+.drop.over { background: var(--fill); border-color: var(--ink); }
+.drop strong { display: block; font-size: 24px; font-weight: 500; letter-spacing: -0.01em; }
+.drop span { color: var(--muted); }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* Liste des fichiers */
+.list { margin-top: 32px; border-top: 1px solid var(--line); }
+.item { border-bottom: 1px solid var(--line); padding: 18px 0; }
+.item-main {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 16px; align-items: center;
+}
+.thumb {
+  width: 56px; height: 56px; border-radius: 8px; background: var(--fill); object-fit: cover;
+  display: grid; place-items: center; font-size: 13px; color: var(--muted); overflow: hidden;
+}
+.name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta { color: var(--muted); font-size: 14px; }
+.weights { text-align: right; white-space: nowrap; }
+.weights .from { color: var(--muted); text-decoration: line-through; margin-right: 8px; }
+.weights .to { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.weights .gain { display: block; font-size: 14px; color: var(--ok); }
+.status { margin-top: 10px; font-size: 14px; color: var(--muted); }
+.bar { height: 3px; background: var(--fill); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--ink); transition: width .2s; }
+.verdict { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 15px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.verdict small { color: var(--muted); font-size: 13px; }
+.note { margin-top: 6px; font-size: 14px; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 8px;
+  padding: 8px 14px; cursor: pointer;
+}
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn:disabled { opacity: .45; cursor: default; }
+.error { color: var(--bad); }
+
+/* Comparaison */
+.compare { margin-top: 16px; }
+.stage { position: relative; max-width: 100%; background: var(--fill); border-radius: 10px; overflow: hidden; }
+.stage img { display: block; width: 100%; height: auto; }
+.stage img.top { position: absolute; inset: 0; height: 100%; object-fit: cover; }
+.stage .split { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--bg); pointer-events: none; }
+.cmp-labels { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); margin: 8px 0 4px; }
+.compare input[type="range"] { width: 100%; accent-color: var(--ink); }
+.videos { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.videos video { width: 100%; border-radius: 10px; background: var(--fill); display: block; }
+.videos p { margin: 6px 0 0; font-size: 14px; color: var(--muted); }
+
+/* Bas de liste */
+.summary {
+  display: none; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between;
+  margin-top: 24px;
+}
+.summary.on { display: flex; }
+.total { font-size: 18px; }
+.total b { font-weight: 600; }
+
+.how { margin-top: 64px; max-width: 70ch; }
+.how summary { cursor: pointer; font-weight: 500; font-size: 18px; }
+.how p { color: var(--muted); }
+
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+  font-size: 15px; opacity: 0; pointer-events: none; transition: opacity .2s; max-width: calc(100% - 32px);
+}
+.toast.on { opacity: 1; }
+
+@media (max-width: 620px) {
+  .item-main { grid-template-columns: 44px minmax(0, 1fr); }
+  .thumb { width: 44px; height: 44px; }
+  .weights { grid-column: 2; text-align: left; }
+  .videos { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>Compresseur</h1>
+  <p class="lede">JPEG, PNG, WebP et MP4. Tout se passe dans ton navigateur&#8239;: tes fichiers ne sont envoyés nulle part. Chaque résultat est comparé à l’original pour te dire si la différence se voit.</p>
+
+  <section class="settings" aria-label="Réglages">
+    <div>
+      <p class="field-label" id="lvl-label">Niveau de compression</p>
+      <div class="levels" role="group" aria-labelledby="lvl-label">
+        <button type="button" data-level="identique" aria-pressed="true">Identique</button>
+        <button type="button" data-level="equilibre" aria-pressed="false">Équilibré</button>
+        <button type="button" data-level="leger" aria-pressed="false">Léger</button>
+        <button type="button" data-level="max" aria-pressed="false">Maximum</button>
+        <button type="button" data-level="perso" aria-pressed="false">Personnalisé</button>
+      </div>
+      <p class="level-help" id="level-help"></p>
+      <div class="custom" id="custom">
+        <label for="custom-q">Qualité</label>
+        <input type="range" id="custom-q" min="1" max="100" value="80">
+        <output id="custom-out" for="custom-q">80</output>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label class="field-label" for="format" style="display:block">Format des images</label>
+        <select id="format">
+          <option value="same">Garder le format</option>
+          <option value="jpeg">Convertir en JPEG</option>
+          <option value="webp">Convertir en WebP</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label" for="maxw" style="display:block">Largeur maximum</label>
+        <select id="maxw">
+          <option value="0">Taille d’origine</option>
+          <option value="3840">3840 px</option>
+          <option value="2560">2560 px</option>
+          <option value="1920">1920 px</option>
+          <option value="1440">1440 px</option>
+          <option value="1080">1080 px</option>
+          <option value="720">720 px</option>
+          <option value="480">480 px</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label" for="audio" style="display:block">Son des vidéos</label>
+        <select id="audio">
+          <option value="keep">Garder le son</option>
+          <option value="remove">Supprimer le son</option>
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" multiple accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,image/jpeg,image/png,image/webp,video/mp4,video/quicktime">
+    <div>
+      <strong>Dépose tes fichiers ici</strong>
+      <span>ou clique pour les choisir. JPEG, PNG, WebP, MP4.</span>
+    </div>
+  </label>
+
+  <div class="list" id="list" aria-live="polite"></div>
+
+  <div class="summary" id="summary">
+    <div class="total" id="total"></div>
+    <div class="actions">
+      <button type="button" class="btn" id="rerun" hidden>Recompresser avec ces réglages</button>
+      <button type="button" class="btn" id="clear">Vider la liste</button>
+      <button type="button" class="btn primary" id="zip">Tout télécharger en .zip</button>
+    </div>
+  </div>
+
+  <details class="how">
+    <summary>Comment la qualité est mesurée</summary>
+    <p>Après chaque compression, l’outil décode le résultat et le compare à l’original, pixel par pixel, avec l’indice SSIM. C’est une mesure de similarité qui imite la façon dont l’œil perçoit les structures et les contrastes. 1 veut dire identique.</p>
+    <p>Pour les images, les niveaux Identique, Équilibré, Léger et Maximum cherchent automatiquement le fichier le plus léger qui reste au-dessus d’un seuil de qualité.</p>
+    <p>Pour les vidéos, l’outil prélève quelques secondes à plusieurs endroits, mesure la meilleure qualité atteignable, puis teste des débits de plus en plus bas jusqu’à trouver le plus léger qui reste dans la tolérance du niveau choisi. Il compresse ensuite toute la vidéo avec ce réglage. Une vidéo simple descend donc beaucoup plus bas qu’une vidéo riche en détails.</p>
+    <p>Si le résultat n’est pas plus léger que ton fichier, l’outil garde l’original.</p>
+  </details>
+</main>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- Réglages ---------- */
+  var LEVELS = {
+    identique: { ssim: 0.99,  bpp: 0.10,  help: "Aucune différence visible. Le poids baisse autant que possible sans toucher au rendu." },
+    equilibre: { ssim: 0.98,  bpp: 0.07,  help: "Différence imperceptible à l’œil nu, fichier nettement plus léger." },
+    leger:     { ssim: 0.965, bpp: 0.045, help: "Très léger. Une petite perte peut apparaître si tu zoomes fortement." },
+    max:       { ssim: 0.94,  bpp: 0.028, help: "Le plus léger possible. L’outil t’indique ensuite si la perte se voit." },
+    perso:     { ssim: null,  bpp: null,  help: "Tu fixes toi-même la qualité. L’outil mesure ensuite la différence avec l’original." }
+  };
+  var S = { level: "identique", custom: 80, format: "same", maxWidth: 0, audio: "keep" };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var levelBtns = document.querySelectorAll(".levels button");
+  function setLevel(l) {
+    S.level = l;
+    levelBtns.forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.level === l)); });
+    $("level-help").textContent = LEVELS[l].help;
+    $("custom").classList.toggle("on", l === "perso");
+    settingsChanged();
+  }
+  levelBtns.forEach(function (b) { b.addEventListener("click", function () { setLevel(b.dataset.level); }); });
+  $("custom-q").addEventListener("input", function (e) { S.custom = +e.target.value; $("custom-out").textContent = e.target.value; settingsChanged(); });
+  $("format").addEventListener("change", function (e) { S.format = e.target.value; settingsChanged(); });
+  $("maxw").addEventListener("change", function (e) { S.maxWidth = +e.target.value; settingsChanged(); });
+  $("audio").addEventListener("change", function (e) { S.audio = e.target.value; settingsChanged(); });
+  $("level-help").textContent = LEVELS.identique.help;
+
+  // Le bouton « Recompresser » n'apparaît que si un réglage change après une compression
+  function settingsChanged() { if (items.some(function (i) { return i.status === "done" || i.status === "error"; })) $("rerun").hidden = false; }
+
+  /* ---------- Outils ---------- */
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  function fmt(bytes) {
+    if (bytes < 1024) return bytes + " o";
+    if (bytes < 1048576) return (bytes / 1024).toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " Ko";
+    return (bytes / 1048576).toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " Mo";
+  }
+  function toast(msg) {
+    var t = $("toast"); t.textContent = msg; t.classList.add("on");
+    clearTimeout(toast._t); toast._t = setTimeout(function () { t.classList.remove("on"); }, 3200);
+  }
+  function kindOf(file) {
+    var n = file.name.toLowerCase();
+    if (/\.(jpe?g)$/.test(n) || file.type === "image/jpeg") return { kind: "image", type: "image/jpeg", label: "JPEG" };
+    if (/\.png$/.test(n) || file.type === "image/png") return { kind: "image", type: "image/png", label: "PNG" };
+    if (/\.webp$/.test(n) || file.type === "image/webp") return { kind: "image", type: "image/webp", label: "WebP" };
+    if (/\.mp4$/.test(n) || file.type === "video/mp4") return { kind: "video", type: "video/mp4", label: "MP4" };
+    if (/\.mov$/.test(n) || file.type === "video/quicktime") return { kind: "video", type: "video/quicktime", label: "MOV" };
+    return null;
+  }
+  var EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "video/mp4": "mp4" };
+  function baseName(n) { return n.replace(/\.[^.]+$/, ""); }
+  function fitSize(w, h, maxW) {
+    if (!maxW || w <= maxW) return [w, h];
+    return [maxW, Math.max(1, Math.round(h * maxW / w))];
+  }
+  function measureSize(w, h, max) {
+    var s = Math.min(1, max / Math.max(w, h));
+    return [Math.max(16, Math.round(w * s)), Math.max(16, Math.round(h * s))];
+  }
+  function lumaOf(src, w, h) {
+    var c = document.createElement("canvas"); c.width = w; c.height = h;
+    var x = c.getContext("2d", { willReadFrequently: true });
+    x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
+    x.imageSmoothingQuality = "high";
+    x.drawImage(src, 0, 0, w, h);
+    var d = x.getImageData(0, 0, w, h).data, L = new Float32Array(w * h);
+    for (var i = 0, j = 0; i < L.length; i++, j += 4) L[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+    return L;
+  }
+  // SSIM par fenêtres 8×8 avec un pas de 4 pixels
+  function ssim(a, b, w, h) {
+    var C1 = 6.5025, C2 = 58.5225, sum = 0, n = 0;
+    for (var y = 0; y + 8 <= h; y += 4) {
+      for (var x = 0; x + 8 <= w; x += 4) {
+        var ma = 0, mb = 0, i, j, o;
+        for (j = 0; j < 8; j++) { o = (y + j) * w + x; for (i = 0; i < 8; i++) { ma += a[o + i]; mb += b[o + i]; } }
+        ma /= 64; mb /= 64;
+        var va = 0, vb = 0, cv = 0;
+        for (j = 0; j < 8; j++) {
+          o = (y + j) * w + x;
+          for (i = 0; i < 8; i++) { var da = a[o + i] - ma, db = b[o + i] - mb; va += da * da; vb += db * db; cv += da * db; }
+        }
+        va /= 63; vb /= 63; cv /= 63;
+        sum += ((2 * ma * mb + C1) * (2 * cv + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2));
+        n++;
+      }
+    }
+    return n ? sum / n : 1;
+  }
+  function verdict(s) {
+    if (s == null) return ["warn", "Qualité non mesurée"];
+    if (s >= 0.99) return ["ok", "Identique à l’œil"];
+    if (s >= 0.98) return ["ok", "Différence imperceptible"];
+    if (s >= 0.965) return ["warn", "Très légère perte, visible seulement en zoomant"];
+    if (s >= 0.94) return ["warn", "Perte légère, visible de près"];
+    return ["bad", "Perte de qualité visible"];
+  }
+  var webpOK = (function () {
+    try { var c = document.createElement("canvas"); c.width = c.height = 1; return c.toDataURL("image/webp").indexOf("data:image/webp") === 0; }
+    catch (e) { return false; }
+  })();
+  function toBlob(canvas, type, q) {
+    return new Promise(function (res, rej) {
+      canvas.toBlob(function (b) { b ? res(b) : rej(new Error("Encodage impossible.")); }, type, q);
+    });
+  }
+  function hasAlpha(bmp) {
+    var w = Math.min(256, bmp.width), h = Math.max(1, Math.round(bmp.height * w / bmp.width));
+    var c = document.createElement("canvas"); c.width = w; c.height = h;
+    var x = c.getContext("2d", { willReadFrequently: true }); x.drawImage(bmp, 0, 0, w, h);
+    var d = x.getImageData(0, 0, w, h).data;
+    for (var i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
+    return false;
+  }
+
+  /* ---------- Images ---------- */
+  async function compressImage(item, prog) {
+    prog(0.05, "Analyse de l’image…");
+    var bmp = await createImageBitmap(item.file, { imageOrientation: "from-image" });
+    var size = fitSize(bmp.width, bmp.height, S.maxWidth), w = size[0], h = size[1];
+    var resized = w !== bmp.width;
+    var src = item.info.type, notes = [];
+    var alpha = src !== "image/jpeg" && hasAlpha(bmp);
+    var out = S.format === "same" ? src : (S.format === "jpeg" ? "image/jpeg" : "image/webp");
+    if (out === "image/webp" && !webpOK) {
+      out = alpha ? "image/png" : "image/jpeg";
+      notes.push("Ce navigateur ne sait pas créer de WebP : fichier enregistré en " + (alpha ? "PNG" : "JPEG") + ".");
+    }
+    if (out === "image/jpeg" && alpha) {
+      out = webpOK ? "image/webp" : "image/png";
+      notes.push("L’image a de la transparence, que le JPEG ne gère pas : fichier enregistré en " + (webpOK ? "WebP" : "PNG") + ".");
+    }
+
+    var ref = document.createElement("canvas"); ref.width = w; ref.height = h;
+    var rx = ref.getContext("2d", { willReadFrequently: true });
+    if (out === "image/jpeg") { rx.fillStyle = "#fff"; rx.fillRect(0, 0, w, h); }
+    rx.imageSmoothingQuality = "high";
+    rx.drawImage(bmp, 0, 0, w, h);
+    bmp.close();
+    var m = measureSize(w, h, 2000), mw = m[0], mh = m[1];
+    var refL = lumaOf(ref, mw, mh);
+
+    async function judge(blob) {
+      var b = await createImageBitmap(blob);
+      var L = lumaOf(b, mw, mh); b.close();
+      return ssim(refL, L, mw, mh);
+    }
+
+    var best = null;
+    var lv = LEVELS[S.level];
+
+    if (out === "image/png") {
+      var rgba = rx.getImageData(0, 0, w, h).data;
+      var tries = S.level === "perso"
+        ? [S.custom >= 95 ? 0 : Math.round(16 + S.custom / 100 * 240)]
+        : [0, 256, 128, 64, 32];
+      for (var k = 0; k < tries.length; k++) {
+        prog(0.15 + 0.8 * k / tries.length, tries[k] === 0 ? "Optimisation sans perte…" : "Réduction à " + tries[k] + " couleurs…");
+        await sleep(0);
+        var ab = UPNG.encode([rgba.slice().buffer], w, h, tries[k]);
+        var blob = new Blob([ab], { type: "image/png" });
+        var sc = tries[k] === 0 ? 1 : await judge(blob);
+        var okQ = S.level === "perso" || sc >= lv.ssim;
+        if (okQ && (!best || blob.size < best.blob.size)) best = { blob: blob, score: sc };
+        if (!okQ) break; // moins de couleurs ne ferait qu'empirer
+      }
+    } else if (S.level === "perso") {
+      prog(0.5, "Compression…");
+      var b1 = await toBlob(ref, out, S.custom / 100);
+      best = { blob: b1, score: await judge(b1) };
+    } else {
+      // Recherche du fichier le plus léger qui reste au-dessus du seuil de qualité
+      var lo = S.level === "max" ? 0.1 : 0.3, hi = 0.97;
+      for (var it = 0; it < 7; it++) {
+        prog(0.1 + 0.85 * it / 7, "Recherche du meilleur réglage…");
+        var q = (lo + hi) / 2;
+        var bq = await toBlob(ref, out, q);
+        var s = await judge(bq);
+        if (s >= lv.ssim) { best = { blob: bq, score: s }; hi = q; } else { lo = q; }
+      }
+      if (!best) { var bh = await toBlob(ref, out, 0.97); best = { blob: bh, score: await judge(bh) }; }
+    }
+
+    var sameFormat = out === src;
+    if (best.blob.size >= item.file.size && !resized && sameFormat) {
+      notes.push("Ton fichier est déjà très optimisé : l’original est conservé.");
+      return { blob: item.file, type: src, score: 1, kept: true, notes: notes, w: w, h: h };
+    }
+    return { blob: best.blob, type: out, score: best.score, notes: notes, w: w, h: h };
+  }
+
+  /* ---------- Vidéos ---------- */
+  // Écart de qualité toléré par rapport à la meilleure qualité atteignable
+  var VDELTA = { identique: 0.003, equilibre: 0.008, leger: 0.018, max: 0.035 };
+
+  function codecDescription(file, id) {
+    var trak = file.getTrackById(id);
+    var entries = trak.mdia.minf.stbl.stsd.entries;
+    for (var i = 0; i < entries.length; i++) {
+      var box = entries[i].avcC || entries[i].hvcC || entries[i].vpcC || entries[i].av1C;
+      if (box) {
+        var st = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
+        box.write(st);
+        return new Uint8Array(st.buffer, 8);
+      }
+    }
+    return undefined;
+  }
+  function aacConfig(file, id) {
+    try { return file.getTrackById(id).mdia.minf.stbl.stsd.entries[0].esds.esd.descs[0].descs[0].data; }
+    catch (e) { return null; }
+  }
+  function rotationOf(m) {
+    if (!m) return 0;
+    var d = Math.round(Math.atan2(m[1] / 65536, m[0] / 65536) * 180 / Math.PI);
+    d = (d + 360) % 360;
+    return [0, 90, 180, 270].indexOf(d) >= 0 ? d : 0;
+  }
+  async function pickAvc(w, h, bitrate, fps) {
+    var list = ["avc1.640034", "avc1.640033", "avc1.640032", "avc1.640028", "avc1.4d0034", "avc1.42e034"];
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var r = await VideoEncoder.isConfigSupported({ codec: list[i], width: w, height: h, bitrate: bitrate, framerate: fps });
+        if (r.supported) return list[i];
+      } catch (e) {}
+    }
+    return null;
+  }
+  function chunkOf(s) {
+    return new EncodedVideoChunk({
+      type: s.is_sync ? "key" : "delta",
+      timestamp: Math.round(s.cts * 1e6 / s.timescale),
+      duration: Math.round(s.duration * 1e6 / s.timescale),
+      data: s.data
+    });
+  }
+
+  // Lit un MP4 : pistes, échantillons et réglages de décodage
+  async function demux(buf, withAudio) {
+    var mp4 = MP4Box.createFile();
+    var info = await new Promise(function (res, rej) {
+      var t = setTimeout(function () { rej(new Error("Ce fichier vidéo n’a pas pu être lu.")); }, 6000);
+      mp4.onReady = function (i) { clearTimeout(t); res(i); };
+      mp4.onError = function () { clearTimeout(t); rej(new Error("Ce fichier vidéo n’a pas pu être lu.")); };
+      buf.fileStart = 0;
+      mp4.appendBuffer(buf);
+    });
+    var vt = info.videoTracks[0];
+    if (!vt) throw new Error("Aucune image vidéo trouvée dans ce fichier.");
+    var at = info.audioTracks[0] || null;
+    var vS = [], aS = [];
+    mp4.onSamples = function (id, user, s) {
+      var arr = id === vt.id ? vS : aS;
+      for (var i = 0; i < s.length; i++) arr.push(s[i]);
+    };
+    mp4.setExtractionOptions(vt.id, null, { nbSamples: vt.nb_samples });
+    if (at && withAudio) mp4.setExtractionOptions(at.id, null, { nbSamples: at.nb_samples });
+    mp4.start(); mp4.flush();
+    await sleep(0);
+    if (!vS.length) throw new Error("Aucune image vidéo n’a pu être extraite.");
+    return {
+      mp4: mp4, vt: vt, at: at, vS: vS, aS: aS,
+      cfg: { codec: vt.codec, codedWidth: vt.video.width, codedHeight: vt.video.height, description: codecDescription(mp4, vt.id) }
+    };
+  }
+
+  // Décode des images et renvoie leur luminance réduite, dans l'ordre d'affichage
+  async function decodeLumas(samples, cfg, mw, mh) {
+    var out = [], err = null;
+    var c = document.createElement("canvas"); c.width = mw; c.height = mh;
+    var x = c.getContext("2d", { willReadFrequently: true });
+    var dec = new VideoDecoder({
+      output: function (f) {
+        try {
+          x.drawImage(f, 0, 0, mw, mh);
+          var d = x.getImageData(0, 0, mw, mh).data, L = new Float32Array(mw * mh);
+          for (var i = 0, j = 0; i < L.length; i++, j += 4) L[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+          out.push({ t: f.timestamp, L: L });
+        } catch (e) { err = e; }
+        f.close();
+      },
+      error: function (e) { err = e; }
+    });
+    dec.configure(cfg);
+    for (var i = 0; i < samples.length; i++) {
+      while (dec.decodeQueueSize > 6) await sleep(1);
+      if (err) throw err;
+      dec.decode(chunkOf(samples[i]));
+    }
+    await dec.flush(); dec.close();
+    if (err) throw err;
+    out.sort(function (a, b) { return a.t - b.t; });
+    return out.map(function (o) { return o.L; });
+  }
+
+  // Ré-encode des images en H.264 dans un MP4
+  async function encodeSamples(o) {
+    var codec = await pickAvc(o.W, o.H, o.bitrate, o.fps);
+    if (!codec) throw new Error("Ce navigateur ne sait pas encoder en H.264 à cette taille.");
+    var target = new Mp4Muxer.ArrayBufferTarget();
+    var muxOpts = {
+      target: target,
+      video: { codec: "avc", width: o.W, height: o.H, rotation: o.rotation || 0 },
+      fastStart: "in-memory",
+      firstTimestampBehavior: "offset"
+    };
+    if (o.audio) muxOpts.audio = { codec: "aac", numberOfChannels: o.audio.channels, sampleRate: o.audio.rate };
+    var muxer = new Mp4Muxer.Muxer(muxOpts);
+    var err = null;
+    var enc = new VideoEncoder({
+      output: function (chunk, meta) { try { muxer.addVideoChunk(chunk, meta); } catch (e) { err = e; } },
+      error: function (e) { err = e; }
+    });
+    enc.configure({
+      codec: codec, width: o.W, height: o.H, bitrate: Math.round(o.bitrate), framerate: o.fps,
+      bitrateMode: "variable", latencyMode: "quality", avc: { format: "avc" }
+    });
+    var cv = null, cx = null;
+    var gop = Math.max(1, Math.round(o.fps * 4)), n = 0, total = o.samples.length;
+    var frameDur = Math.round(1e6 / o.fps);
+    var dec = new VideoDecoder({
+      output: function (frame) {
+        try {
+          var ts = o.retime ? n * frameDur : frame.timestamp;
+          var vf;
+          if (frame.displayWidth === o.W && frame.displayHeight === o.H) {
+            vf = new VideoFrame(frame, { timestamp: ts }); // sans redimensionnement : image transmise telle quelle
+          } else {
+            if (!cv) { cv = document.createElement("canvas"); cv.width = o.W; cv.height = o.H; cx = cv.getContext("2d"); cx.imageSmoothingQuality = "high"; }
+            cx.drawImage(frame, 0, 0, o.W, o.H);
+            vf = new VideoFrame(cv, { timestamp: ts });
+          }
+          frame.close();
+          enc.encode(vf, { keyFrame: n % gop === 0 || (o.keyAt && o.keyAt.indexOf(n) >= 0) });
+          vf.close();
+          n++;
+          if (o.prog && n % 8 === 0) o.prog(n / total);
+        } catch (e) { err = e; try { frame.close(); } catch (_) {} }
+      },
+      error: function (e) { err = e; }
+    });
+    dec.configure(o.cfg);
+    for (var i = 0; i < o.samples.length; i++) {
+      while (dec.decodeQueueSize > 6 || enc.encodeQueueSize > 6) { await sleep(1); if (err) throw err; }
+      if (err) throw err;
+      dec.decode(chunkOf(o.samples[i]));
+    }
+    await dec.flush(); await enc.flush();
+    dec.close(); enc.close();
+    if (err) throw err;
+    if (o.audio) {
+      o.aSamples.forEach(function (s, k) {
+        muxer.addAudioChunkRaw(
+          s.data, "key",
+          Math.round(s.cts * 1e6 / s.timescale),
+          Math.round(s.duration * 1e6 / s.timescale),
+          k === 0 ? { decoderConfig: { codec: o.audio.codec, numberOfChannels: o.audio.channels, sampleRate: o.audio.rate, description: o.audio.description } } : undefined
+        );
+      });
+    }
+    muxer.finalize();
+    return new Blob([target.buffer], { type: "video/mp4" });
+  }
+
+  // Extrait jusqu'à 3 passages de la vidéo pour tester rapidement les réglages
+  function probeSamples(vS, fps) {
+    var total = vS.length;
+    if (total / fps <= 8) return { samples: vS, starts: [0] };
+    var syncs = [];
+    vS.forEach(function (s, i) { if (s.is_sync) syncs.push(i); });
+    var out = [], used = {}, starts = [];
+    [0.2, 0.5, 0.8].forEach(function (p) {
+      var aim = Math.floor(total * p), start = syncs[0];
+      for (var k = 0; k < syncs.length; k++) if (syncs[k] <= aim) start = syncs[k];
+      if (used[start]) return;
+      used[start] = true;
+      starts.push(out.length); // image clé forcée au début de chaque passage
+      var end = Math.min(total, start + Math.round(fps * 2.5));
+      for (var i = start; i < end; i++) out.push(vS[i]);
+    });
+    return { samples: out, starts: starts };
+  }
+
+  function videoVerdict(rel) {
+    if (rel <= 0.004) return ["ok", "Identique à l’œil"];
+    if (rel <= 0.01) return ["ok", "Différence imperceptible"];
+    if (rel <= 0.02) return ["warn", "Très légère perte, visible seulement en zoomant"];
+    if (rel <= 0.04) return ["warn", "Perte légère, visible de près"];
+    return ["bad", "Perte de qualité visible"];
+  }
+
+  async function compressVideo(item, prog) {
+    if (!("VideoEncoder" in window)) throw new Error("Ce navigateur ne sait pas encoder de vidéo. Utilise Chrome, Edge ou un Safari récent.");
+    if (typeof MP4Box === "undefined" || typeof Mp4Muxer === "undefined") throw new Error("Les outils vidéo ne sont pas encore chargés. Réessaie dans un instant.");
+    prog(0.02, "Lecture de la vidéo…");
+    var d = await demux(await item.file.arrayBuffer(), S.audio === "keep");
+    var notes = [], audio = null;
+    if (d.at && S.audio === "keep") {
+      var desc = /^mp4a/.test(d.at.codec) ? aacConfig(d.mp4, d.at.id) : null;
+      if (desc) audio = { codec: d.at.codec, channels: d.at.audio.channel_count, rate: d.at.audio.sample_rate, description: desc };
+      else notes.push("Le son de cette vidéo utilise un format non pris en charge : il a été retiré.");
+    } else if (d.at) notes.push("Son supprimé.");
+
+    var sup = await VideoDecoder.isConfigSupported(d.cfg).catch(function () { return { supported: false }; });
+    if (!sup.supported) throw new Error("Ce navigateur ne sait pas lire le codec de cette vidéo (" + d.vt.codec + ").");
+
+    var durS = 0, bytes = 0;
+    d.vS.forEach(function (s) { durS += s.duration / s.timescale; bytes += s.size; });
+    var fps = d.vS.length / durS;
+    var srcW = d.vt.video.width, srcH = d.vt.video.height;
+    var sz = fitSize(srcW, srcH, S.maxWidth), W = sz[0] - (sz[0] % 2), H = sz[1] - (sz[1] % 2);
+    var areaRatio = Math.min(1, (W * H) / (srcW * srcH));
+    var cap = Math.max(200000, (bytes * 8 / durS) * areaRatio * 0.9);
+    var ms = measureSize(W, H, 640), mw = ms[0], mh = ms[1];
+
+    // 1. Passages de test et référence
+    prog(0.04, "Analyse de la vidéo…");
+    var pr = probeSamples(d.vS, fps), probe = pr.samples;
+    var refL = await decodeLumas(probe, d.cfg, mw, mh);
+    async function tryRate(br) {
+      var blob = await encodeSamples({ samples: probe, cfg: d.cfg, W: W, H: H, fps: fps, bitrate: br, retime: true, keyAt: pr.starts });
+      var r = await demux(await blob.arrayBuffer(), false);
+      var L = await decodeLumas(r.vS, r.cfg, mw, mh);
+      var n = Math.min(L.length, refL.length), tot = 0, mn = 1, c = 0;
+      for (var i = 0; i < n; i += 2) { var s = ssim(refL[i], L[i], mw, mh); tot += s; mn = Math.min(mn, s); c++; }
+      return { mean: c ? tot / c : 1, min: mn };
+    }
+
+    // 2. Meilleure qualité atteignable, puis recherche du débit le plus bas qui reste dans la tolérance
+    prog(0.08, "Mesure de la qualité de référence…");
+    var top = await tryRate(cap);
+    var chosen = cap, chosenScore = top;
+    if (S.level === "perso") {
+      var bpp = 0.01 + (S.custom / 100) * 0.14;
+      chosen = Math.min(cap, Math.max(150000, bpp * W * H * fps));
+      prog(0.3, "Test du réglage…");
+      chosenScore = await tryRate(chosen);
+    } else {
+      var delta = VDELTA[S.level];
+      var lo = Math.min(cap * 0.25, Math.max(100000, 0.004 * W * H * fps)), hi = cap;
+      for (var it = 0; it < 5; it++) {
+        var mid = Math.sqrt(lo * hi);
+        prog(0.12 + 0.12 * it, "Recherche du meilleur réglage (" + (it + 1) + "/5)…");
+        var r = await tryRate(mid);
+        if (r.mean >= top.mean - delta && r.min >= top.min - delta * 2) { chosen = mid; chosenScore = r; hi = mid; }
+        else lo = mid;
+      }
+    }
+
+    // 3. Compression complète au réglage retenu
+    var out = await encodeSamples({
+      samples: d.vS, cfg: d.cfg, W: W, H: H, fps: fps, bitrate: chosen,
+      rotation: rotationOf(d.vt.matrix), audio: audio, aSamples: d.aS, retime: false,
+      prog: function (p) { prog(0.74 + 0.25 * p, "Compression finale " + Math.round(p * 100) + " %"); }
+    });
+    var rel = Math.max(0, top.mean - chosenScore.mean);
+
+    if (out.size >= item.file.size * 0.98 && W === srcW && !(d.at && S.audio === "remove")) {
+      notes.push("Cette vidéo est déjà très optimisée : l’original est conservé.");
+      return { blob: item.file, type: item.info.type, score: 1, kept: true, notes: notes, w: srcW, h: srcH };
+    }
+    return { blob: out, type: "video/mp4", score: chosenScore.mean, rel: rel, notes: notes, w: W, h: H };
+  }
+
+  /* ---------- Liste ---------- */
+  var items = [], seq = 0, running = false;
+
+  function addFiles(list) {
+    var added = 0, skipped = 0;
+    Array.prototype.forEach.call(list, function (f) {
+      var info = kindOf(f);
+      if (!info) { skipped++; return; }
+      var it = { id: ++seq, file: f, info: info, status: "pending", origUrl: URL.createObjectURL(f) };
+      items.push(it); render(it); added++;
+    });
+    if (skipped) toast(skipped + " fichier(s) ignoré(s) : seuls JPEG, PNG, WebP et MP4 sont pris en charge.");
+    if (added) run();
+  }
+
+  function render(it) {
+    if (!it.el) {
+      it.el = document.createElement("article");
+      it.el.className = "item";
+      $("list").appendChild(it.el);
+    }
+    var thumb = it.info.kind === "image"
+      ? '<img class="thumb" alt="" src="' + it.origUrl + '">'
+      : '<div class="thumb">' + it.info.label + "</div>";
+    var right = "";
+    if (it.status === "done") {
+      var gain = Math.round((1 - it.result.blob.size / it.file.size) * 100);
+      right = '<div class="weights"><span class="from">' + fmt(it.file.size) + '</span><span class="to">' + fmt(it.result.blob.size) + "</span>" +
+        '<span class="gain">' + (gain > 0 ? "−" + gain + " %" : "Inchangé") + "</span></div>";
+    } else {
+      right = '<div class="weights"><span class="to" style="font-size:16px;font-weight:400">' + fmt(it.file.size) + "</span></div>";
+    }
+    var body = "";
+    if (it.status === "pending" || it.status === "working") {
+      body = '<div class="status">' + (it.msg || "En attente…") + '</div><div class="bar"><i style="width:' + Math.round((it.p || 0) * 100) + '%"></i></div>';
+    } else if (it.status === "error") {
+      body = '<div class="status error">' + it.msg + "</div>";
+    } else if (it.status === "done") {
+      var r = it.result, v = r.kept ? verdict(1) : (r.rel != null ? videoVerdict(r.rel) : verdict(r.score));
+      var scoreTxt = r.score != null && !r.kept ? " <small>SSIM " + r.score.toLocaleString("fr-FR", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + "</small>" : "";
+      body = '<div class="verdict"><span class="dot ' + v[0] + '"></span><span>' + v[1] + "</span>" + scoreTxt + "</div>" +
+        r.notes.map(function (n) { return '<div class="note">' + n + "</div>"; }).join("") +
+        '<div class="actions"><button type="button" class="btn" data-act="compare">Comparer</button>' +
+        '<button type="button" class="btn primary" data-act="save">Télécharger</button></div><div class="cmp-slot"></div>';
+    }
+    var LABEL = { "image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WebP", "video/mp4": "MP4", "video/quicktime": "MOV" };
+    var outLabel = it.result ? LABEL[it.result.type] : it.info.label;
+    var meta = it.info.label + (outLabel !== it.info.label ? " → " + outLabel : "") + (it.result ? ", " + it.result.w + " × " + it.result.h + " px" : "");
+    it.el.innerHTML = '<div class="item-main">' + thumb +
+      '<div style="min-width:0"><div class="name"></div><div class="meta">' + meta + "</div></div>" + right + "</div>" + body;
+    it.el.querySelector(".name").textContent = it.file.name;
+    var cmp = it.el.querySelector('[data-act="compare"]'), sv = it.el.querySelector('[data-act="save"]');
+    if (cmp) cmp.addEventListener("click", function () { toggleCompare(it); });
+    if (sv) sv.addEventListener("click", function () { saveOne(it); });
+  }
+
+  function progressOf(it) {
+    return function (p, msg) {
+      it.p = p; if (msg) it.msg = msg;
+      var bar = it.el.querySelector(".bar i"), st = it.el.querySelector(".status");
+      if (bar) bar.style.width = Math.round(p * 100) + "%";
+      if (st && msg) st.textContent = msg;
+    };
+  }
+
+  async function run() {
+    if (running) return;
+    running = true;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.status !== "pending") continue;
+      it.status = "working"; it.p = 0; it.msg = "Préparation…"; render(it);
+      try {
+        var res = it.info.kind === "image" ? await compressImage(it, progressOf(it)) : await compressVideo(it, progressOf(it));
+        it.result = res;
+        it.outName = baseName(it.file.name) + (res.kept ? "" : "-optimise") + "." + (EXT[res.type] || (res.type === "video/quicktime" ? "mov" : "bin"));
+        if (it.outUrl) URL.revokeObjectURL(it.outUrl);
+        it.outUrl = URL.createObjectURL(res.blob);
+        it.status = "done";
+      } catch (e) {
+        it.status = "error"; it.msg = (e && e.message) || "La compression a échoué.";
+      }
+      render(it);
+      updateSummary();
+    }
+    running = false;
+  }
+
+  function updateSummary() {
+    var done = items.filter(function (i) { return i.status === "done"; });
+    $("summary").classList.toggle("on", items.length > 0);
+    if (!done.length) { $("total").textContent = ""; return; }
+    var a = 0, b = 0;
+    done.forEach(function (i) { a += i.file.size; b += i.result.blob.size; });
+    $("total").innerHTML = "Total : " + fmt(a) + " → <b>" + fmt(b) + "</b> (" + (a ? "−" + Math.round((1 - b / a) * 100) + " %" : "") + ")";
+  }
+
+  /* ---------- Comparaison ---------- */
+  function toggleCompare(it) {
+    var slot = it.el.querySelector(".cmp-slot");
+    if (slot.firstChild) { slot.innerHTML = ""; return; }
+    var box = document.createElement("div"); box.className = "compare";
+    if (it.info.kind === "image") {
+      box.innerHTML =
+        '<div class="stage" style="aspect-ratio:' + it.result.w + "/" + it.result.h + '">' +
+        '<img alt="Original" src="' + it.origUrl + '"><img class="top" alt="Version optimisée" src="' + it.outUrl + '">' +
+        '<div class="split"></div></div>' +
+        '<div class="cmp-labels"><span>Original</span><span>Optimisée</span></div>' +
+        '<input type="range" min="0" max="100" value="50" aria-label="Position de la comparaison">';
+      var top = box.querySelector("img.top"), split = box.querySelector(".split"), r = box.querySelector("input");
+      var upd = function () { top.style.clipPath = "inset(0 0 0 " + r.value + "%)"; split.style.left = r.value + "%"; };
+      r.addEventListener("input", upd); upd();
+    } else {
+      box.innerHTML =
+        '<div class="videos"><div><video muted loop playsinline controls src="' + it.origUrl + '"></video><p>Original, ' + fmt(it.file.size) + "</p></div>" +
+        '<div><video muted loop playsinline controls src="' + it.outUrl + '"></video><p>Optimisée, ' + fmt(it.result.blob.size) + "</p></div></div>" +
+        '<div class="actions"><button type="button" class="btn">Lire les deux ensemble</button></div>';
+      var vids = box.querySelectorAll("video");
+      box.querySelector("button").addEventListener("click", function () {
+        vids.forEach(function (v) { v.currentTime = 0; v.play().catch(function () {}); });
+      });
+    }
+    slot.appendChild(box);
+  }
+
+  /* ---------- Téléchargements ---------- */
+  // Dans Claude : enregistrement via la plateforme. Ailleurs (GitHub Pages, ton site…) : téléchargement classique.
+  var inClaude = !!(window.claude && typeof window.claude.use === "function");
+  var downloadsReady = inClaude
+    ? window.claude.use("downloads").catch(function () { return null; })
+    : Promise.resolve(null);
+  function nativeSave(filename, data) {
+    var blob = data instanceof Blob ? data : new Blob([data]);
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = filename; a.style.display = "none";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+    toast("Téléchargement lancé.");
+    return true;
+  }
+  async function save(filename, data) {
+    var downloads = await downloadsReady;
+    if (!downloads) return nativeSave(filename, data);
+    try { await downloads.save({ filename: filename, data: data }); toast("Fichier enregistré."); return true; }
+    catch (e) {
+      if (e && e.code === "declined") return false;
+      if (e && e.code === "rate_limited") { toast("Une demande d’enregistrement est déjà ouverte."); return false; }
+      toast("Enregistrement impossible ici (" + ((e && e.code) || "erreur") + ").");
+      return false;
+    }
+  }
+  function saveOne(it) { save(it.outName, it.result.blob); }
+  $("zip").addEventListener("click", async function () {
+    var done = items.filter(function (i) { return i.status === "done"; });
+    if (!done.length) { toast("Aucun fichier prêt."); return; }
+    if (typeof JSZip === "undefined") { toast("L’outil zip n’est pas encore chargé. Réessaie dans un instant."); return; }
+    var zip = new JSZip(), used = {};
+    done.forEach(function (i) {
+      var n = i.outName, k = 1;
+      while (used[n]) n = baseName(i.outName) + "-" + (++k) + "." + n.split(".").pop();
+      used[n] = true;
+      zip.file(n, i.result.blob);
+    });
+    var blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+    save("fichiers-optimises.zip", blob);
+  });
+
+  /* ---------- Actions de liste ---------- */
+  $("rerun").addEventListener("click", function () {
+    items.forEach(function (i) {
+      if (i.status === "done" || i.status === "error") { i.status = "pending"; i.result = null; i.p = 0; i.msg = ""; render(i); }
+    });
+    $("rerun").hidden = true;
+    run();
+  });
+  $("clear").addEventListener("click", function () {
+    if (running) { toast("Attends la fin de la compression en cours."); return; }
+    items.forEach(function (i) { URL.revokeObjectURL(i.origUrl); if (i.outUrl) URL.revokeObjectURL(i.outUrl); });
+    items = []; $("list").innerHTML = ""; updateSummary(); $("summary").classList.remove("on");
+  });
+
+  /* ---------- Dépôt de fichiers ---------- */
+  var drop = $("drop");
+  $("file").addEventListener("change", function (e) { addFiles(e.target.files); e.target.value = ""; });
+  ["dragenter", "dragover"].forEach(function (t) {
+    drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (t) {
+    drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove("over"); });
+  });
+  drop.addEventListener("drop", function (e) { if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+  window.addEventListener("dragover", function (e) { e.preventDefault(); });
+  window.addEventListener("drop", function (e) { e.preventDefault(); });
+})();
+</script>
+</body>
+</html>
